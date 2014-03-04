@@ -699,7 +699,6 @@ bool CdbIf::Db_AsyncAddColumn(CdbIfColList &cl) {
                            new_colp->rowkey_);
     CassandraMutationMap::iterator cmm_it = mutation_map_.find(key_value);
     if (cmm_it == mutation_map_.end()) {
-        CFMutationMap ecfmm;
         cmm_it = mutation_map_.insert(
             std::pair<std::string, CFMutationMap>(key_value,
                 CFMutationMap())).first;
@@ -722,20 +721,21 @@ bool CdbIf::Db_AsyncAddColumn(CdbIfColList &cl) {
         cassandra::Column c;
 
         if (it->cftype_ == GenDb::NewCf::COLUMN_FAMILY_SQL) {
-            CDBIF_CONDCHECK_LOG_RETF((it->name.size() == 1) && (it->value.size() == 1));
+            CDBIF_CONDCHECK_LOG_RETF((it->name->size() == 1) && 
+                                     (it->value->size() == 1));
             CDBIF_CONDCHECK_LOG_RETF(cftype != GenDb::NewCf::COLUMN_FAMILY_NOSQL);
             cftype = GenDb::NewCf::COLUMN_FAMILY_SQL;
             // Column Name
             std::string col_name;
             try {
-                col_name = boost::get<std::string>(it->name.at(0));
+                col_name = boost::get<std::string>(it->name->at(0));
             } catch (boost::bad_get& ex) {
                 CDBIF_HANDLE_EXCEPTION(__func__ << "Exception for boost::get, what=" << ex.what());
             }
             c.__set_name(col_name);
             // Column Value
             std::string col_value;
-            DbDataValueToStringNonComposite(col_value, it->value.at(0));
+            DbDataValueToStringNonComposite(col_value, it->value->at(0));
             c.__set_value(col_value);
             // Timestamp and TTL
             c.__set_timestamp(ts);
@@ -754,12 +754,12 @@ bool CdbIf::Db_AsyncAddColumn(CdbIfColList &cl) {
             cftype = GenDb::NewCf::COLUMN_FAMILY_NOSQL;
             // Column Name
             std::string col_name;
-            DbDataValueVecToString(col_name, it->name.size() != 1, it->name);
+            DbDataValueVecToString(col_name, it->name->size() != 1, *it->name);
             c.__set_name(col_name);
             // Column Value
             std::string col_value;
-            DbDataValueVecToString(col_value, it->value.size() != 1,
-                                   it->value);
+            DbDataValueVecToString(col_value, it->value->size() != 1,
+                                   *it->value);
             c.__set_value(col_value);
             // Timestamp and TTL
             c.__set_timestamp(ts);
@@ -839,25 +839,25 @@ bool CdbIf::ColListFromColumnOrSuper(GenDb::ColList& ret,
                 CDBIF_CONDCHECK_LOG(0);
                 continue;
             }
-            GenDb::NewCol col(citer->column.name, res);
+            GenDb::NewCol *col(new GenDb::NewCol(citer->column.name, res));
             columns.push_back(col);
         }
     } else if (cf->cftype_ == NewCf::COLUMN_FAMILY_NOSQL) {
         NewColVec& columns = ret.columns_;
         std::vector<cassandra::ColumnOrSuperColumn>::iterator citer;
         for (citer = result.begin(); citer != result.end(); citer++) {
-            GenDb::DbDataValueVec name;
-            if (!CdbIf::DbDataValueVecFromString(name, cf->comparator_type, citer->column.name)) {
+            GenDb::DbDataValueVec *name(new GenDb::DbDataValueVec);
+            if (!CdbIf::DbDataValueVecFromString(*name, cf->comparator_type, citer->column.name)) {
                 CDBIF_CONDCHECK_LOG(0);
                 continue;
             }
-            GenDb::DbDataValueVec value;
-            if (!CdbIf::DbDataValueVecFromString(value, cf->default_validation_class, citer->column.value)) {
+            GenDb::DbDataValueVec *value(new GenDb::DbDataValueVec);
+            if (!CdbIf::DbDataValueVecFromString(*value, cf->default_validation_class, citer->column.value)) {
                 CDBIF_CONDCHECK_LOG(0);
                 continue;
             }
 
-            GenDb::NewCol col(name, value);
+            GenDb::NewCol *col(new GenDb::NewCol(name, value));
             columns.push_back(col);
         }
     }
@@ -908,7 +908,7 @@ bool CdbIf::Db_GetRow(GenDb::ColList& ret, const std::string& cfname,
     return (CdbIf::ColListFromColumnOrSuper(ret, result, cfname));
 }
 
-bool CdbIf::Db_GetMultiRow(std::vector<GenDb::ColList>& ret,
+bool CdbIf::Db_GetMultiRow(GenDb::ColListVec& ret,
         const std::string& cfname, const std::vector<DbDataValueVec>& rowkeys,
         GenDb::ColumnNameRange *crange_ptr) {
     CdbIfCfInfo *info;
@@ -985,12 +985,12 @@ bool CdbIf::Db_GetMultiRow(std::vector<GenDb::ColList>& ret,
 
         for (std::map<std::string, std::vector<ColumnOrSuperColumn> >::iterator it = ret_c.begin();
                 it != ret_c.end(); it++) {
-            GenDb::ColList col_list;
-            if (!CdbIf::DbDataValueVecFromString(col_list.rowkey_, cf->key_validation_class, it->first)) {
+            std::auto_ptr<GenDb::ColList> col_list(new GenDb::ColList);
+            if (!CdbIf::DbDataValueVecFromString(col_list->rowkey_, cf->key_validation_class, it->first)) {
                 CDBIF_CONDCHECK_LOG(0);
                 continue;
             }
-            CdbIf::ColListFromColumnOrSuper(col_list, it->second, cfname);
+            CdbIf::ColListFromColumnOrSuper(*col_list, it->second, cfname);
             ret.push_back(col_list);
         }
 
@@ -1017,7 +1017,7 @@ bool CdbIf::Db_GetRangeSlices(GenDb::ColList& col_list,
     if (col_limit_reached && (col_list.columns_.size()>0))
     {
         // copy last entry of result returned as column start for next qry
-        crange_new.start_ = (col_list.columns_.back()).name;
+        crange_new.start_ = *(col_list.columns_.back()).name;
     }
 
     // extract rest of the result
@@ -1033,14 +1033,14 @@ bool CdbIf::Db_GetRangeSlices(GenDb::ColList& col_list,
         // copy last entry of result returned as column start for next qry
         if (col_limit_reached && (next_col_list.columns_.size()>0))
         {
-            crange_new.start_ = (next_col_list.columns_.back()).name;
+            crange_new.start_ = *(next_col_list.columns_.back()).name;
         }
 
         // copy result after the first entry
         NewColVec::iterator it = next_col_list.columns_.begin();
         if (it != next_col_list.columns_.end()) it++;
-        col_list.columns_.insert(
-                col_list.columns_.end(), it, next_col_list.columns_.end());
+        col_list.columns_.transfer(col_list.columns_.end(), it,
+            next_col_list.columns_.end(), next_col_list.columns_);
     }
 
     return result;

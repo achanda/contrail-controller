@@ -24,7 +24,7 @@ query_status_t DbQueryUnit::process_query()
     cr.finish_.push_back(timestamp_end);
 
     std::vector<GenDb::DbDataValueVec> keys;    // vector of keys for multi-row get
-    std::vector<GenDb::ColList> mget_res;   // vector of result for each row
+    GenDb::ColListVec mget_res;   // vector of result for each row
     for (uint32_t t2 = t2_start; t2 <= t2_end; t2++)
     {
         GenDb::ColList result;
@@ -49,7 +49,7 @@ query_status_t DbQueryUnit::process_query()
     if (!m_query->dbif->Db_GetMultiRow(mget_res, cfname, keys, &cr)) {
         QE_IO_ERROR_RETURN(0, QUERY_FAILURE);
     } else {
-        for (std::vector<GenDb::ColList>::iterator it = mget_res.begin();
+        for (GenDb::ColListVec::iterator it = mget_res.begin();
                 it != mget_res.end(); it++) {
             uint32_t t2 = boost::get<uint32_t>(it->rowkey_.at(0));
             GenDb::NewColVec::iterator i;
